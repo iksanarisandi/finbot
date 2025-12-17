@@ -139,10 +139,49 @@ async function getTransactionSummary(userId, startDate, endDate) {
     };
 }
 
+/**
+ * Get current month's balance (lightweight query)
+ * @param {number} userId
+ * @returns {Promise<number>} - Balance (income - expense)
+ */
+async function getMonthlyBalance(userId) {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const result = await prisma.transaction.groupBy({
+        by: ['type'],
+        where: {
+            userId,
+            date: {
+                gte: startOfMonth,
+                lte: endOfMonth
+            }
+        },
+        _sum: {
+            amount: true
+        }
+    });
+
+    let income = 0n;
+    let expense = 0n;
+
+    for (const row of result) {
+        if (row.type === 'income') {
+            income = row._sum.amount || 0n;
+        } else {
+            expense = row._sum.amount || 0n;
+        }
+    }
+
+    return Number(income - expense);
+}
+
 module.exports = {
     createTransaction,
     getTransactionBySeq,
     getRecentTransactions,
     deleteTransaction,
-    getTransactionSummary
+    getTransactionSummary,
+    getMonthlyBalance
 };

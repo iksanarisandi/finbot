@@ -145,11 +145,12 @@ Silakan kirim bukti pembayaran yang lebih jelas atau hubungi admin untuk bantuan
 const transactionConfirmMessage = `
 ✅ *Tercatat!*
 
-#️⃣ #{seq} - *Rp {amount}*
+#️⃣ #{seq} - *{sign}Rp {amount}*
 📝 {description}
 🗓 {date}
 
-📊 Sisa limit: {used}/{limit} catatan bulan ini
+💰 *Saldo bulan ini:* Rp {balance}
+📊 Limit: {used}/{limit} catatan
 `;
 
 const deleteConfirmPrompt = `

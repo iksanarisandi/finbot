@@ -4,10 +4,10 @@
 
 const { parseTransaction, validateTransaction } = require('../../utils/parser');
 const { getUserByTelegramId, checkTransactionLimit } = require('../../services/userService');
-const { createTransaction } = require('../../services/transactionService');
+const { createTransaction, getMonthlyBalance } = require('../../services/transactionService');
 const { formatNumber, formatDate } = require('../../utils/formatter');
 const { errorMessages, transactionConfirmMessage } = require('../../utils/messages');
-const { checkRateLimit } = require('../../middleware/rateLimit');
+const { checkRateLimit } = require('../../middleware/security');
 const { Markup } = require('telegraf');
 
 /**
@@ -67,18 +67,21 @@ async function handleTransaction(ctx) {
         // Create transaction
         const transaction = await createTransaction(user, parsed);
 
-        // Get updated limit status
+        // Get updated limit status and balance
         const newLimitStatus = await checkTransactionLimit(user);
+        const monthlyBalance = await getMonthlyBalance(user.id);
 
         // Format confirmation message
-        const emoji = parsed.type === 'income' ? '💰' : '💸';
-        const sign = parsed.type === 'income' ? '+' : '';
+        const sign = parsed.type === 'income' ? '+' : '-';
+        const balanceSign = monthlyBalance >= 0 ? '+' : '';
 
         const message = transactionConfirmMessage
             .replace('{seq}', transaction.seq.toString())
-            .replace('{amount}', `${sign}${formatNumber(Number(transaction.amount))}`)
+            .replace('{sign}', sign)
+            .replace('{amount}', formatNumber(Number(transaction.amount)))
             .replace('{description}', parsed.description.charAt(0).toUpperCase() + parsed.description.slice(1))
             .replace('{date}', formatDate(transaction.date, user.timezone))
+            .replace('{balance}', `${balanceSign}${formatNumber(Math.abs(monthlyBalance))}`)
             .replace('{used}', newLimitStatus.current.toString())
             .replace('{limit}', newLimitStatus.limit.toString());
 
