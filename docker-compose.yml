@@ -11,9 +11,10 @@ services:
       - NODE_ENV=production
       - BOT_TOKEN=${BOT_TOKEN}
       - ADMIN_IDS=${ADMIN_IDS}
-      - DATABASE_URL=postgresql://finbot:${POSTGRES_PASSWORD:-finbot_secret_password}@postgres:5432/finbot?schema=public
+      - DATABASE_URL=postgresql://finbot:${POSTGRES_PASSWORD:-finbot_secret_password}@postgres:5432/finbot?schema=public&connection_limit=10
       - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
       - WEBHOOK_PATH=${WEBHOOK_PATH:-/webhook}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
       - PORT=3000
       - PRO_PRICE=${PRO_PRICE:-25000}
     depends_on:
