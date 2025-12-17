@@ -6,7 +6,7 @@ services:
     container_name: finbot
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - NODE_ENV=production
       - BOT_TOKEN=${BOT_TOKEN}
@@ -35,7 +35,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U finbot -d finbot"]
+      test: [ "CMD-SHELL", "pg_isready -U finbot -d finbot" ]
       interval: 10s
       timeout: 5s
       retries: 5
