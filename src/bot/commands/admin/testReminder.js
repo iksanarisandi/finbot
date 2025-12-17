@@ -2,7 +2,7 @@
  * /testreminder - Admin command to manually trigger reminder (for testing)
  */
 
-const { sendDailyReminders } = require('../../services/reminderService');
+const { sendDailyReminders } = require('../../../services/reminderService');
 
 async function testReminderCommand(ctx, bot) {
     try {
