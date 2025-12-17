@@ -83,7 +83,8 @@ const planInfoMessage = `
 • Rekap harian/mingguan/bulanan
 • Edit & hapus transaksi
 
-⭐️ *PRO* - Rp {price}/bulan {proStatus}
+⭐️ *PRO* - ~Rp 25.000~ *Rp 9.000*/bulan {proStatus}
+🔥 _Promo Terbatas!_
 • 200 catatan per bulan
 • Semua fitur Free
 • Export CSV (coming soon)
@@ -95,7 +96,8 @@ Upgrade sekarang: /upgrade
 const upgradeMessage = `
 💳 *Upgrade ke PRO*
 
-💰 Harga: *Rp {price} / bulan*
+💰 Harga: ~Rp 25.000~ *Rp 9.000 / bulan*
+🔥 _Promo Terbatas!_
 🔖 Referensi: \`{reference}\`
 
 📱 Scan QRIS di bawah ini untuk pembayaran:
