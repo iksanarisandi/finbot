@@ -22,6 +22,7 @@ const { confirmCommand } = require('./commands/admin/confirm');
 const { rejectCommand } = require('./commands/admin/reject');
 const { statsCommand } = require('./commands/admin/stats');
 const { downgradeCommand } = require('./commands/admin/downgrade');
+const { testReminderCommand } = require('./commands/admin/testReminder');
 
 // Import handlers
 const { handleTransaction, handleUpgradePrompt } = require('./handlers/transaction');
@@ -83,6 +84,7 @@ function createBot(token) {
     bot.command('reject', requireAdmin, (ctx) => rejectCommand(ctx, bot));
     bot.command('stats', requireAdmin, statsCommand);
     bot.command('downgrade', requireAdmin, (ctx) => downgradeCommand(ctx, bot));
+    bot.command('testreminder', requireAdmin, (ctx) => testReminderCommand(ctx, bot));
 
     // =========================================
     // CALLBACK HANDLERS
