@@ -131,7 +131,7 @@ async function start() {
             }
 
             // Webhook handler
-            app.use(WEBHOOK_PATH, express.json(), (req, res, next) => {
+            app.post(WEBHOOK_PATH, express.json(), (req, res, next) => {
                 // Only verify secret if it's explicitly configured
                 if (useSecret) {
                     const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
@@ -142,7 +142,9 @@ async function start() {
                 }
 
                 next();
-            }, bot.webhookCallback(WEBHOOK_PATH));
+            }, (req, res) => {
+                return bot.handleUpdate(req.body, res);
+            });
 
             // Start Express server
             app.listen(PORT, () => {
