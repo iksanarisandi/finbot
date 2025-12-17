@@ -75,19 +75,11 @@ app.use((req, res, next) => {
 // ============================================
 
 app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-    });
+    res.json({ status: 'ok' });
 });
 
 app.get('/', (req, res) => {
-    res.json({
-        name: 'FinBot',
-        description: 'Telegram Financial Bot',
-        status: 'running'
-    });
+    res.status(200).send('OK');
 });
 
 // Block suspicious paths
