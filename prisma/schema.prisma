@@ -19,6 +19,7 @@ model User {
   monthlyLimit  Int       @default(15) @map("monthly_limit")
   planExpiredAt DateTime? @map("plan_expired_at")
   timezone      String    @default("Asia/Jakarta")
+  reminderEnabled Boolean @default(true) @map("reminder_enabled")
   seq           Int       @default(0)
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")

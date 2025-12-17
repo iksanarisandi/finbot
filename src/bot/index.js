@@ -15,6 +15,7 @@ const { deleteCommand, handleDeleteConfirm, handleDeleteCancel } = require('./co
 const planCommand = require('./commands/plan');
 const upgradeCommand = require('./commands/upgrade');
 const statusCommand = require('./commands/status');
+const reminderCommand = require('./commands/reminder');
 
 // Import admin commands
 const { confirmCommand } = require('./commands/admin/confirm');
@@ -73,6 +74,7 @@ function createBot(token) {
     bot.command('plan', planCommand);
     bot.command('upgrade', rateLimitMiddleware('upgrade'), upgradeCommand);
     bot.command('status', statusCommand);
+    bot.command('reminder', reminderCommand);
 
     // =========================================
     // ADMIN COMMANDS (Protected)

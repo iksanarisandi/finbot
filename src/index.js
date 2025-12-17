@@ -8,6 +8,7 @@ require('dotenv').config();
 const crypto = require('crypto');
 const express = require('express');
 const { createBot } = require('./bot');
+const { scheduleReminder } = require('./services/reminderService');
 
 // ============================================
 // ENVIRONMENT VALIDATION
@@ -171,6 +172,9 @@ async function start() {
         console.log(`🤖 Bot: @${botInfo.username}`);
         console.log(`👤 Admin IDs: ${process.env.ADMIN_IDS}`);
         console.log(`🛡️  Security: Enabled`);
+
+        // Start reminder scheduler
+        scheduleReminder(bot);
 
     } catch (error) {
         console.error('❌ Failed to start bot:', error);
