@@ -117,22 +117,28 @@ async function start() {
             // =========================================
 
             const webhookUrl = `${WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
+            const useSecret = !!process.env.WEBHOOK_SECRET;
 
             console.log(`📡 Setting webhook to: ${webhookUrl}`);
 
-            // Set webhook with secret token for verification
-            await bot.telegram.setWebhook(webhookUrl, {
-                secret_token: WEBHOOK_SECRET
-            });
+            // Set webhook (with or without secret)
+            if (useSecret) {
+                await bot.telegram.setWebhook(webhookUrl, {
+                    secret_token: WEBHOOK_SECRET
+                });
+            } else {
+                await bot.telegram.setWebhook(webhookUrl);
+            }
 
-            // Webhook handler with secret verification
+            // Webhook handler
             app.use(WEBHOOK_PATH, express.json(), (req, res, next) => {
-                // Verify secret token from Telegram
-                const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
-
-                if (secretHeader !== WEBHOOK_SECRET) {
-                    console.log(`[SECURITY] Invalid webhook secret from ${req.ip}`);
-                    return res.status(401).send('Unauthorized');
+                // Only verify secret if it's explicitly configured
+                if (useSecret) {
+                    const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
+                    if (secretHeader !== WEBHOOK_SECRET) {
+                        console.log(`[SECURITY] Invalid webhook secret from ${req.ip}`);
+                        return res.status(401).send('Unauthorized');
+                    }
                 }
 
                 next();
@@ -142,7 +148,7 @@ async function start() {
             app.listen(PORT, () => {
                 console.log(`🚀 FinBot started in webhook mode`);
                 console.log(`📡 Webhook: ${webhookUrl}`);
-                console.log(`🔒 Webhook secret: Enabled`);
+                console.log(`🔒 Webhook secret: ${useSecret ? 'Enabled' : 'Disabled'}`);
                 console.log(`🌐 Server listening on port ${PORT}`);
             });
 
