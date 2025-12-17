@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  telegramId    BigInt    @unique @map("telegram_id")
+  username      String?
+  firstName     String?   @map("first_name")
+  plan          String    @default("free")
+  monthlyLimit  Int       @default(15) @map("monthly_limit")
+  planExpiredAt DateTime? @map("plan_expired_at")
+  timezone      String    @default("Asia/Jakarta")
+  seq           Int       @default(0)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  transactions    Transaction[]
+  paymentRequests PaymentRequest[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  seq         Int
+  amount      BigInt
+  type        String
+  description String   @db.VarChar(200)
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, seq])
+  @@index([userId, date(sort: Desc)])
+  @@map("transactions")
+}
+
+model PaymentRequest {
+  id                Int       @id @default(autoincrement())
+  userId            Int       @map("user_id")
+  referenceCode     String    @unique @map("reference_code")
+  planRequested     String    @map("plan_requested")
+  amount            Int
+  durationMonths    Int       @default(1) @map("duration_months")
+  proofFileId       String?   @map("proof_file_id")
+  status            String    @default("pending")
+  verifiedAt        DateTime? @map("verified_at")
+  verifiedByAdminId BigInt?   @map("verified_by_admin_id")
+  rejectionReason   String?   @map("rejection_reason")
+  expiredAt         DateTime  @map("expired_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("payment_requests")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  adminId   BigInt?  @map("admin_id")
+  action    String
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}

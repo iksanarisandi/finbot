@@ -1,0 +1,30 @@
+{
+  "name": "finbot",
+  "version": "1.0.0",
+  "description": "Telegram Bot untuk Catatan Keuangan Pribadi",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio"
+  },
+  "keywords": ["telegram", "bot", "finance", "budgeting"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

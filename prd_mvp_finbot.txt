@@ -1,0 +1,908 @@
+# PRD MVP - Bot Telegram Catatan Keuangan Pribadi
+
+**Versi:** 1.0 MVP  
+**Target:** 1-5 ribu user aktif harian  
+**Stack:** Node.js + Telegraf + PostgreSQL + Prisma + Docker  
+**Deployment:** VPS via Dokploy  
+**Timeline:** 3-4 minggu development
+
+---
+
+## 1. EXECUTIVE SUMMARY
+
+Bot Telegram untuk mencatat pengeluaran/pendapatan dengan format natural language. User dapat mencatat transaksi dengan cepat seperti "20k makan siang", melihat rekap harian/mingguan/bulanan, dan upgrade ke paket Pro untuk limit lebih tinggi. Sistem langganan manual via QRIS dengan verifikasi admin.
+
+**Fokus MVP:**
+- ✅ Stabil, aman, dan reliable
+- ✅ Fitur inti yang benar-benar dipakai
+- ✅ Error handling yang robust
+- ✅ Security basic yang proper
+- ❌ Tanpa fitur fancy yang belum terbukti perlu
+
+---
+
+## 2. TARGET PENGGUNA & USE CASE
+
+### 2.1 Target Pengguna
+- **Individu** yang ingin mencatat pengeluaran harian cepat via Telegram
+- **Pelaku UMKM kecil** yang butuh log transaksi sederhana tanpa sistem akuntansi rumit
+- **Karakteristik:** Terbiasa dengan Telegram, butuh solusi praktis tanpa install app baru
+
+### 2.2 Use Case Prioritas MVP
+
+**UC-01: Pencatatan Transaksi**
+- User mengirim: "20k makan siang"
+- Bot parsing, validasi, simpan, konfirmasi
+
+**UC-02: Melihat Rekap**
+- User kirim /today, /week, atau /month
+- Bot tampilkan total pengeluaran, pemasukan, dan saldo
+
+**UC-03: Edit/Hapus Transaksi Salah**
+- User kirim /history
+- User kirim /delete 5 (hapus transaksi #5)
+
+**UC-04: Upgrade ke Pro**
+- User kirim /upgrade
+- Bot kirim QRIS + instruksi
+- User kirim bukti bayar
+- Admin konfirmasi via /confirm
+
+**UC-05: Admin Monitoring**
+- Admin kirim /stats
+- Bot tampilkan statistik sistem
+
+---
+
+## 3. FITUR DETAIL MVP
+
+### 3.1 Onboarding & Registration
+
+#### Command: /start
+
+**Behavior:**
+1. Bot cek apakah user sudah exist di database (by telegram_id)
+2. Jika **belum exist:**
+   - Create user baru dengan default:
+     - `plan = 'free'`
+     - `monthly_limit = 15`
+     - `plan_expired_at = null`
+     - `timezone = 'Asia/Jakarta'` (hardcoded untuk MVP)
+   - Kirim welcome message
+3. Jika **sudah exist:**
+   - Kirim welcome back message dengan status plan
+
+**Welcome Message:**
+```
+Selamat datang di FinBot! 🎉
+
+Catat pengeluaran dengan mudah:
+📝 Ketik: 20k makan siang
+📝 Ketik: 150000 belanja bulanan
+📝 Ketik: +500k gaji (untuk pemasukan)
+
+Lihat rekap:
+/today - Rekap hari ini
+/week - Rekap 7 hari terakhir
+/month - Rekap bulan ini
+
+Paket Anda: Free (15 catatan/bulan)
+Upgrade: /upgrade
+
+Bantuan lengkap: /help
+```
+
+**Error Handling:**
+- Database connection error → Retry 3x, jika gagal kirim: "Maaf sedang gangguan. Coba lagi sebentar."
+- Telegram API error → Log error, kirim generic error message
+
+---
+
+### 3.2 Pencatatan Transaksi
+
+#### Input Format Natural Language
+
+**Format yang Didukung:**
+```
+<nominal> <deskripsi>
+```
+
+**Contoh Valid:**
+- `20k makan siang`
+- `20000 makan siang`
+- `20.000 makan siang`
+- `+50k gaji freelance` (pemasukan, dengan prefix +)
+- `50k terima transfer` (pemasukan, dengan keyword: terima, dapat, gaji, income)
+- `-15000 bayar hutang` (pengeluaran eksplisit)
+
+**Parsing Rules:**
+
+1. **Extract Nominal:**
+   - Regex pattern: `^([+-]?)(\d{1,3}(?:[.,]\d{3})*|\d+)([kK])?`
+   - Support: 20k, 20K, 20000, 20.000, 20,000
+   - Convert 'k' → × 1000
+   - Remove titik/koma separator
+   - Parse ke integer
+
+2. **Determine Type:**
+   - Default: `expense` (pengeluaran)
+   - Jika ada prefix `+` → `income`
+   - Jika deskripsi contain keyword: `terima|dapat|gaji|income|masuk|bonus` (case-insensitive) → `income`
+   - Jika prefix `-` → tetap `expense`
+
+3. **Extract Description:**
+   - Ambil semua kata setelah nominal
+   - Trim whitespace
+   - Max 200 karakter
+   - Tidak boleh kosong
+
+**Validation Rules:**
+
+| Rule | Error Message |
+|------|---------------|
+| Nominal tidak ditemukan | "Format salah. Contoh: 20k makan siang" |
+| Nominal = 0 | "Nominal tidak boleh 0" |
+| Nominal > 1.000.000.000 | "Nominal terlalu besar (max 1 milyar)" |
+| Description kosong | "Deskripsi tidak boleh kosong. Contoh: 20k makan siang" |
+| Description > 200 char | "Deskripsi terlalu panjang (max 200 karakter)" |
+| User mencapai limit bulanan | "Limit bulan ini tercapai (X/Y). Upgrade ke Pro: /upgrade" |
+
+**Processing Flow:**
+
+```
+1. User kirim message
+2. Bot cek apakah message adalah command → skip
+3. Parse nominal + description
+4. Validate input
+5. Cek limit bulanan user:
+   - Query count transaksi user di bulan ini (YYYY-MM based on timezone)
+   - Jika count >= monthly_limit → reject dengan error message
+6. Get atau create seq number untuk user (auto-increment per user)
+7. Insert ke database dalam transaction
+8. Kirim konfirmasi
+```
+
+**Confirmation Message:**
+```
+✅ Tercatat!
+
+#5 - Rp 20.000
+📝 Makan siang
+🗓 17 Des 2024, 14:30
+
+Sisa limit: 10/15 catatan bulan ini
+```
+
+**Database Transaction:**
+```sql
+BEGIN;
+  -- Lock user row for seq increment
+  SELECT seq FROM users WHERE id = ? FOR UPDATE;
+  
+  -- Get next seq
+  UPDATE users SET seq = seq + 1 WHERE id = ?;
+  
+  -- Insert transaction
+  INSERT INTO transactions (...) VALUES (...);
+COMMIT;
+```
+
+**Error Handling:**
+- Parse error → Kirim error message sesuai validation rules
+- DB error → Rollback, log, kirim: "Gagal menyimpan. Coba lagi."
+- Limit exceeded → Kirim error + tombol inline "Upgrade ke Pro"
+
+---
+
+### 3.3 Rekap & Laporan
+
+#### Command: /today
+
+**Behavior:**
+1. Get user timezone (hardcoded 'Asia/Jakarta' untuk MVP)
+2. Calculate start_of_day dan end_of_day berdasarkan timezone
+3. Query transactions dalam range tersebut
+4. Hitung:
+   - `total_expense` = SUM(amount) WHERE type='expense'
+   - `total_income` = SUM(amount) WHERE type='income'
+   - `balance` = total_income - total_expense
+   - `count` = COUNT(*)
+5. Kirim rekap
+
+**Response Format:**
+```
+📊 Rekap Hari Ini
+🗓 Rabu, 17 Des 2024
+
+💸 Pengeluaran: Rp 145.000
+💰 Pemasukan: Rp 0
+📈 Selisih: -Rp 145.000
+
+📝 Total: 7 catatan
+
+Lihat detail: /history
+```
+
+#### Command: /week
+
+**Behavior:**
+1. Calculate last 7 days (dari hari ini mundur 6 hari)
+2. Query dan hitung sama seperti /today
+3. Kirim rekap
+
+**Response Format:**
+```
+📊 Rekap 7 Hari Terakhir
+📅 11 - 17 Des 2024
+
+💸 Pengeluaran: Rp 890.000
+💰 Pemasukan: Rp 2.500.000
+📈 Selisih: +Rp 1.610.000
+
+📝 Total: 42 catatan
+
+Lihat detail: /history
+```
+
+#### Command: /month
+
+**Behavior:**
+1. Get current month (YYYY-MM)
+2. Calculate start dan end of month
+3. Query dan hitung
+4. Kirim rekap
+
+**Response Format:**
+```
+📊 Rekap Bulan Ini
+📅 Desember 2024
+
+💸 Pengeluaran: Rp 3.450.000
+💰 Pemasukan: Rp 5.000.000
+📈 Selisih: +Rp 1.550.000
+
+📝 Total: 89 catatan
+📊 Limit: 89/200 (Pro)
+
+Lihat detail: /history
+```
+
+#### Command: /month YYYY-MM
+
+**Behavior:**
+1. Parse bulan dari parameter
+2. Validate format YYYY-MM
+3. Query dan hitung untuk bulan tersebut
+4. Kirim rekap
+
+**Example:** `/month 2024-11`
+
+**Validation:**
+- Format salah → "Format salah. Contoh: /month 2024-11"
+- Bulan di masa depan → "Tidak bisa melihat bulan yang belum terjadi"
+- Bulan sebelum user register → "Anda belum terdaftar di bulan itu"
+
+**Error Handling:**
+- Query error → Log, kirim: "Gagal mengambil data. Coba lagi."
+- No data → Kirim: "Belum ada transaksi di periode ini"
+
+---
+
+### 3.4 History & Manajemen Transaksi
+
+#### Command: /history [limit]
+
+**Behavior:**
+1. Default limit = 10 transaksi terakhir
+2. User bisa specify: `/history 20` untuk 20 terakhir
+3. Max limit = 50
+4. Query transaksi user, order by created_at DESC
+5. Kirim list dengan format readable
+
+**Response Format:**
+```
+📜 Transaksi Terakhir (10 terbaru)
+
+#15 | 17 Des, 14:30
+💸 Rp 20.000 - Makan siang
+
+#14 | 17 Des, 09:15
+💸 Rp 15.000 - Kopi pagi
+
+#13 | 16 Des, 20:00
+💰 +Rp 500.000 - Bonus freelance
+
+...
+
+Edit: /edit <id> <data baru>
+Hapus: /delete <id>
+```
+
+**Format per item:**
+- Expense: `💸` emoji + amount negatif display
+- Income: `💰` emoji + amount positif display
+- Seq number dengan prefix #
+- Tanggal relatif jika hari ini/kemarin, absolute jika lebih lama
+
+#### Command: /delete <id>
+
+**Behavior:**
+1. Parse ID dari parameter
+2. Validate ID adalah integer
+3. Check ownership: transaction.user_id = current_user.id
+4. Kirim konfirmasi dengan inline keyboard (Ya/Batal)
+5. Jika user klik "Ya" → delete transaction
+6. Update monthly count jika perlu (untuk free user tracking)
+
+**Example:** `/delete 15`
+
+**Confirmation Message:**
+```
+⚠️ Hapus transaksi ini?
+
+#15 | 17 Des, 14:30
+💸 Rp 20.000 - Makan siang
+
+[Ya, Hapus] [Batal]
+```
+
+**After Delete:**
+```
+✅ Transaksi #15 berhasil dihapus
+```
+
+**Validation:**
+- ID tidak ditemukan → "Transaksi #15 tidak ditemukan"
+- ID bukan milik user → "Transaksi #15 tidak ditemukan" (same message untuk security)
+- Format salah → "Format salah. Contoh: /delete 15"
+
+**Error Handling:**
+- DB error → Log, kirim: "Gagal menghapus. Coba lagi."
+
+#### Command: /edit <id> <data_baru>
+
+**⚠️ SCOPE MVP: DITUNDA KE PHASE 2**
+
+Reason: Edit transaction bisa kompleks (update seq? update month count?). Untuk MVP, user bisa delete + add baru.
+
+---
+
+### 3.5 Subscription & Payment
+
+#### Command: /plan
+
+**Behavior:**
+1. Kirim informasi paket Free vs Pro dalam format tabel
+2. Include harga dan cara pembayaran
+
+**Response:**
+```
+💳 Paket Langganan
+
+🆓 FREE (Aktif)
+• 15 catatan per bulan
+• Rekap harian/mingguan/bulanan
+• Edit & hapus transaksi
+
+⭐️ PRO - Rp 25.000/bulan
+• 200 catatan per bulan
+• Semua fitur Free
+• Export CSV (coming soon)
+• Priority support
+
+Upgrade sekarang: /upgrade
+```
+
+#### Command: /upgrade
+
+**Behavior:**
+1. Cek apakah user sudah Pro dan belum expired
+   - Jika ya → "Anda sudah Pro sampai [date]"
+2. Generate unique payment reference code
+3. Create payment request record (status: pending)
+4. Kirim QRIS image + instruksi
+5. Set timeout: payment request expired dalam 24 jam
+
+**Payment Reference Format:**
+```
+FIN-{USER_ID}-{TIMESTAMP}
+Contoh: FIN-123456-20241217
+```
+
+**Response:**
+```
+💳 Upgrade ke PRO
+
+Harga: Rp 25.000 / bulan
+Referensi: FIN-123456-20241217
+
+Scan QRIS di bawah ini:
+[QRIS Image]
+
+Setelah transfer, kirim bukti pembayaran (screenshot) ke chat ini.
+
+⏰ Link pembayaran berlaku 24 jam
+❓ Butuh bantuan? /help
+```
+
+**User Submit Bukti:**
+
+1. User kirim foto/dokumen
+2. Bot detect message type = photo atau document
+3. Bot cek apakah user punya pending payment request
+4. Jika tidak → Kirim: "Kirim /upgrade dulu untuk mulai proses pembayaran"
+5. Jika ya:
+   - Update payment request: add proof_file_id
+   - Forward foto ke admin dengan caption info
+   - Kirim konfirmasi ke user
+
+**Forward to Admin:**
+```
+💰 Bukti Pembayaran Baru
+
+User ID: 123456
+Username: @johndoe
+Referensi: FIN-123456-20241217
+Request: Pro - 1 bulan
+Waktu upload: 17 Des 2024, 15:30
+
+Konfirmasi: /confirm 123456 pro 1
+Tolak: /reject 123456
+```
+
+**Confirmation to User:**
+```
+✅ Bukti pembayaran diterima!
+
+Referensi: FIN-123456-20241217
+
+Admin akan verifikasi dalam 1x24 jam. Anda akan dapat notifikasi jika pembayaran dikonfirmasi.
+
+Cek status: /status
+```
+
+**Error Handling:**
+- No pending payment → Arahkan ke /upgrade dulu
+- File terlalu besar → "File terlalu besar. Kirim screenshot ukuran lebih kecil."
+- Admin ID tidak valid → Log error, kirim generic message ke user
+
+---
+
+### 3.6 Admin Commands
+
+**Admin Identification:**
+- Admin IDs stored in environment variable: `ADMIN_IDS=123456789,987654321`
+- Parse ke array integer saat boot
+- Every admin command: check `ADMIN_IDS.includes(ctx.from.id)`
+- Jika bukan admin → reply "Unauthorized" dan log attempt
+
+#### Command: /confirm <user_id> <plan> <duration>
+
+**Behavior:**
+1. Validate admin
+2. Parse parameters:
+   - user_id: integer
+   - plan: 'pro' only (free tidak perlu confirm)
+   - duration: integer (months)
+3. Check user exists
+4. Check user punya pending payment request
+5. Update user:
+   - plan = 'pro'
+   - monthly_limit = 200
+   - plan_expired_at = NOW() + duration months
+6. Update payment request: status = 'verified'
+7. Kirim notifikasi ke user
+8. Kirim konfirmasi ke admin
+
+**Example:** `/confirm 123456 pro 1`
+
+**Admin Confirmation:**
+```
+✅ Konfirmasi Berhasil
+
+User: 123456 (@johndoe)
+Plan: PRO
+Durasi: 1 bulan
+Berlaku sampai: 17 Jan 2025
+
+User telah diberitahu.
+```
+
+**User Notification:**
+```
+🎉 Pembayaran Dikonfirmasi!
+
+Paket PRO Anda aktif sampai 17 Jan 2025
+
+Manfaat PRO:
+✅ Limit 200 catatan/bulan
+✅ Export CSV (coming soon)
+✅ Priority support
+
+Selamat menggunakan! 🚀
+```
+
+**Validation:**
+- User tidak ditemukan → "User 123456 tidak ditemukan"
+- Plan invalid → "Plan harus 'pro'"
+- Duration invalid → "Durasi harus angka positif"
+- No pending payment → "User tidak punya pending payment"
+
+#### Command: /reject <user_id> [reason]
+
+**Behavior:**
+1. Validate admin
+2. Parse user_id
+3. Check pending payment exists
+4. Update payment request: status = 'rejected'
+5. Kirim notifikasi ke user dengan reason (optional)
+6. Kirim konfirmasi ke admin
+
+**Example:** `/reject 123456 Bukti tidak jelas`
+
+**User Notification:**
+```
+❌ Pembayaran Ditolak
+
+Referensi: FIN-123456-20241217
+Alasan: Bukti tidak jelas
+
+Silakan kirim bukti pembayaran yang lebih jelas atau hubungi admin untuk bantuan.
+
+Upload ulang: /upgrade
+```
+
+#### Command: /stats
+
+**Behavior:**
+1. Validate admin
+2. Query database untuk statistik:
+   - Total users registered
+   - Total users Pro (active)
+   - Total transactions all time
+   - Total transactions this month
+   - Total pending payment requests
+3. Kirim ringkasan
+
+**Response:**
+```
+📊 Statistik Sistem
+🕐 17 Des 2024, 15:45
+
+👥 Total Users: 1,247
+⭐️ User Pro Aktif: 89
+💸 Total Transaksi: 45,892
+📅 Transaksi Bulan Ini: 8,234
+⏳ Pending Payments: 5
+
+Database: ✅ Healthy
+Bot Uptime: 5 hari 12 jam
+```
+
+**Error Handling:**
+- Query error → "Gagal mengambil statistik"
+
+#### Command: /downgrade <user_id>
+
+**Behavior:**
+1. Validate admin
+2. Parse user_id
+3. Update user:
+   - plan = 'free'
+   - monthly_limit = 15
+   - plan_expired_at = null
+4. Kirim notifikasi ke user
+5. Kirim konfirmasi ke admin
+
+**Example:** `/downgrade 123456`
+
+**Use Case:** User request refund atau admin perlu revert upgrade
+
+---
+
+### 3.7 Help & Support
+
+#### Command: /help
+
+**Response:**
+```
+📚 Bantuan FinBot
+
+📝 CATAT TRANSAKSI
+Ketik langsung: 20k makan siang
+Pemasukan: +50k gaji freelance
+
+📊 LIHAT REKAP
+/today - Hari ini
+/week - 7 hari terakhir
+/month - Bulan ini
+/month 2024-11 - Bulan tertentu
+
+📜 KELOLA TRANSAKSI
+/history - 10 transaksi terakhir
+/delete <id> - Hapus transaksi
+
+💳 LANGGANAN
+/plan - Info paket
+/upgrade - Upgrade ke Pro
+/status - Cek status langganan
+
+❓ Butuh bantuan lebih?
+Hubungi admin: @finbot_support
+```
+
+#### Command: /status
+
+**Behavior:**
+1. Get user current plan info
+2. Kirim status detail
+
+**Response untuk Free User:**
+```
+ℹ️ Status Akun
+
+Paket: 🆓 FREE
+Limit: 15 catatan/bulan
+Terpakai bulan ini: 8/15
+
+Upgrade ke PRO: /upgrade
+```
+
+**Response untuk Pro User:**
+```
+ℹ️ Status Akun
+
+Paket: ⭐️ PRO
+Limit: 200 catatan/bulan
+Terpakai bulan ini: 45/200
+Berlaku sampai: 17 Jan 2025
+
+Perpanjang: /upgrade
+```
+
+---
+
+## 4. DATABASE SCHEMA
+
+### 4.1 Tabel: users
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  telegram_id BIGINT UNIQUE NOT NULL,
+  username VARCHAR(255),
+  first_name VARCHAR(255),
+  plan VARCHAR(10) NOT NULL DEFAULT 'free', -- 'free' | 'pro'
+  monthly_limit INTEGER NOT NULL DEFAULT 15,
+  plan_expired_at TIMESTAMP,
+  timezone VARCHAR(50) NOT NULL DEFAULT 'Asia/Jakarta',
+  seq INTEGER NOT NULL DEFAULT 0, -- untuk auto-increment transaction seq per user
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_telegram_id ON users(telegram_id);
+CREATE INDEX idx_users_plan_expired ON users(plan, plan_expired_at);
+```
+
+**Notes:**
+- `telegram_id`: unique identifier dari Telegram
+- `seq`: counter untuk generate seq number transaksi per user
+- `plan_expired_at`: nullable, jika Pro akan di-set ke future date
+
+### 4.2 Tabel: transactions
+
+```sql
+CREATE TABLE transactions (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL, -- sequential number per user (#1, #2, #3...)
+  amount BIGINT NOT NULL, -- dalam rupiah, integer
+  type VARCHAR(10) NOT NULL, -- 'expense' | 'income'
+  description VARCHAR(200) NOT NULL,
+  date TIMESTAMP NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_transactions_user_date ON transactions(user_id, date DESC);
+CREATE INDEX idx_transactions_user_seq ON transactions(user_id, seq);
+CREATE UNIQUE INDEX idx_transactions_user_seq_unique ON transactions(user_id, seq);
+```
+
+**Notes:**
+- `seq`: per-user sequential ID, bukan global
+- `amount`: selalu positif integer, type menentukan expense/income
+- `date`: timestamp saat transaksi dicatat (user timezone aware via application)
+
+### 4.3 Tabel: payment_requests
+
+```sql
+CREATE TABLE payment_requests (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reference_code VARCHAR(50) UNIQUE NOT NULL,
+  plan_requested VARCHAR(10) NOT NULL, -- 'pro'
+  amount INTEGER NOT NULL, -- harga dalam rupiah
+  duration_months INTEGER NOT NULL DEFAULT 1,
+  proof_file_id VARCHAR(255), -- Telegram file_id dari foto bukti
+  status VARCHAR(20) NOT NULL DEFAULT 'pending', -- 'pending' | 'verified' | 'rejected' | 'expired'
+  verified_at TIMESTAMP,
+  verified_by_admin_id BIGINT,
+  rejection_reason TEXT,
+  expired_at TIMESTAMP NOT NULL, -- 24 jam dari created_at
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_payment_requests_user ON payment_requests(user_id);
+CREATE INDEX idx_payment_requests_status ON payment_requests(status);
+CREATE INDEX idx_payment_requests_reference ON payment_requests(reference_code);
+```
+
+**Notes:**
+- `reference_code`: unique per payment request
+- `expired_at`: auto-set ke NOW() + 24 hours saat create
+- `verified_by_admin_id`: track admin yang konfirmasi
+
+### 4.4 Tabel: audit_logs (untuk security & monitoring)
+
+```sql
+CREATE TABLE audit_logs (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  admin_id BIGINT, -- jika aksi dari admin
+  action VARCHAR(100) NOT NULL, -- 'user_registered', 'transaction_created', 'payment_confirmed', etc
+  details JSONB, -- flexible JSON untuk store context
+  ip_address INET, -- future: track dari Telegram API jika available
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_logs_user ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_action ON audit_logs(action);
+CREATE INDEX idx_audit_logs_created ON audit_logs(created_at DESC);
+```
+
+**Notes:**
+- Log semua aksi penting untuk debugging & security audit
+- JSONB untuk flexibility
+
+---
+
+## 5. SECURITY & ERROR HANDLING
+
+### 5.1 Input Validation & Sanitization
+
+**Validasi Input Pengguna:**
+1. **Nominal:**
+   - Must be positive integer
+   - Max: 1.000.000.000 (1 milyar)
+   - Min: 1
+
+2. **Description:**
+   - Not empty
+   - Max length: 200 characters
+   - Trim whitespace
+   - No SQL injection: menggunakan parameterized query (Prisma ORM)
+
+3. **Command Parameters:**
+   - Parse dengan try-catch
+   - Validate type (integer untuk ID, string untuk plan, etc)
+   - Reject jika format salah
+
+**Sanitasi:**
+- Prisma ORM handles SQL injection prevention
+- Escape HTML entities jika perlu display di message (Telegram auto-escape)
+- Validate Telegram file_id format
+
+### 5.2 Rate Limiting
+
+**Implementation: Simple In-Memory Rate Limiter**
+
+```javascript
+const rateLimiter = new Map();
+
+function checkRateLimit(userId, action, limit, windowMs) {
+  const key = `${userId}:${action}`;
+  const now = Date.now();
+  
+  if (!rateLimiter.has(key)) {
+    rateLimiter.set(key, []);
+  }
+  
+  const requests = rateLimiter.get(key);
+  
+  // Remove old requests outside window
+  const validRequests = requests.filter(time => now - time < windowMs);
+  
+  if (validRequests.length >= limit) {
+    return false; // Rate limit exceeded
+  }
+  
+  validRequests.push(now);
+  rateLimiter.set(key, validRequests);
+  return true;
+}
+```
+
+**Rate Limits:**
+
+| Action | Limit | Window | Error Message |
+|--------|-------|--------|---------------|
+| Transaction creation | 20 | 1 hour | "Terlalu banyak transaksi. Tunggu 1 jam." |
+| /month command | 5 | 1 minute | "Terlalu banyak request. Coba lagi sebentar." |
+| /history command | 10 | 1 minute | "Terlalu banyak request. Coba lagi sebentar." |
+| /upgrade command | 3 | 1 hour | "Tunggu 1 jam sebelum request upgrade lagi." |
+| Photo upload | 5 | 1 hour | "Terlalu banyak upload. Tunggu 1 jam." |
+
+**Cleanup:**
+- Jalankan setInterval setiap 1 jam untuk clear old entries dari Map
+- Keep memory usage < 10MB
+
+### 5.3 Admin Security
+
+**Admin Validation:**
+```javascript
+const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(id => parseInt(id.trim()));
+
+function isAdmin(telegramId) {
+  return ADMIN_IDS.includes(telegramId);
+}
+
+function requireAdmin(ctx, next) {
+  if (!isAdmin(ctx.from.id)) {
+    ctx.reply('⛔️ Unauthorized');
+    // Log suspicious attempt
+    logAudit({
+      action: 'unauthorized_admin_attempt',
+      admin_id: ctx.from.id,
+      details: { command: ctx.message.text }
+    });
+    return;
+  }
+  return next();
+}
+```
+
+**Admin Commands Protection:**
+- Semua admin commands MUST call `requireAdmin` middleware
+- Log semua admin actions ke audit_logs
+- Never expose admin IDs ke public
+
+### 5.4 Error Handling Strategy
+
+**Error Categories:**
+
+1. **User Input Errors** (4xx equivalent)
+   - Invalid format
+   - Validation failed
+   - Not found
+   - **Action:** Reply dengan error message jelas + contoh
+
+2. **System Errors** (5xx equivalent)
+   - Database connection failed
+   - External API timeout
+   - Unexpected exceptions
+   - **Action:** Log error, reply generic message, retry jika applicable
+
+3. **Rate Limit Errors**
+   - Too many requests
+   - **Action:** Reply dengan cooldown message
+
+**Error Response Templates:**
+
+```javascript
+const errorMessages = {
+  PARSE_ERROR: 'Format salah. Contoh: 20k makan siang',
+  AMOUNT_ZERO: 'Nominal tidak boleh 0',
+  AMOUNT_TOO_LARGE: 'Nominal terlalu besar (max 1 milyar)',
+  DESCRIPTION_EMPTY: 'Deskripsi tidak boleh kosong. Contoh: 20k makan siang',
+  DESCRIPTION_TOO_LONG: 'Deskripsi terlalu panjang (max 200 karakter)',
+  LIMIT_EXCEEDED: 'Limit bulan ini tercapai ({current}/{limit}). Upgrade ke Pro: /upgrade',
+  NOT_FOUND: 'Transaksi #{id} tidak ditemukan',
+  RATE_LIMIT: 'Terlalu banyak request. Tunggu {time}.',
+  SYSTEM_ERROR: 'Maaf terjadi kesalahan. Coba lagi nanti.',
+  DB_ERROR: 'Gagal menyimpan data. Coba lagi.',
+  UNAUTHORIZED: '⛔️ Unauthorized'
+};
+```
